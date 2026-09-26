@@ -4,6 +4,7 @@ export type EvennessLevel = (typeof EVENNESS_LEVELS)[number]
 export interface PaperSample {
   id?: number
   sampleNo: string
+  traceCode: string
   runId: number
   sizeMm: number
   stripeCount: number
@@ -12,4 +13,4 @@ export interface PaperSample {
   schemaRev?: number
 }
 
-export type PaperSampleInput = Omit<PaperSample, 'id' | 'schemaRev'>
+export type PaperSampleInput = Omit<PaperSample, 'id' | 'traceCode' | 'schemaRev'>

@@ -155,7 +155,7 @@ export default function Dashboard() {
             <Table size="small" sx={{ minWidth: 720 }}>
               <TableHead>
                 <TableRow>
-                  <TableCell>样本号</TableCell>
+                  <TableCell>样本号 / 追溯码</TableCell>
                   <TableCell>对应工序</TableCell>
                   <TableCell>匀度</TableCell>
                   <TableCell align="right">帘纹条数</TableCell>
@@ -169,7 +169,12 @@ export default function Dashboard() {
                   const deviation = run?.deviation ?? 0
                   return (
                     <TableRow key={sample.id ?? sample.sampleNo} sx={{ bgcolor: '#fff8df' }}>
-                      <TableCell sx={{ fontWeight: 700 }}>{sample.sampleNo}</TableCell>
+                      <TableCell sx={{ fontWeight: 700 }}>
+                        {sample.sampleNo}
+                        <Typography variant="caption" component="div" sx={{ fontFamily: 'monospace', color: 'text.secondary', letterSpacing: '0.04em' }}>
+                          {sample.traceCode || '追溯码待补'}
+                        </Typography>
+                      </TableCell>
                       <TableCell>{run?.runNo ?? '工序待关联'}</TableCell>
                       <TableCell>{sample.evenness}</TableCell>
                       <TableCell align="right">{sample.stripeCount}</TableCell>

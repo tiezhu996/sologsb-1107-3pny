@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Alert, Box, Button, Card, CardContent, Chip, Grid, Stack, TextField, Typography } from '@mui/material'
+import { Alert, Box, Button, Card, CardContent, Chip, Grid, InputAdornment, Stack, TextField, Typography } from '@mui/material'
 import { GrainStripePreview } from '../components/common/GrainStripePreview'
 import { RulerInput } from '../components/common/RulerInput'
 import { StatBadge } from '../components/common/StatBadge'
@@ -9,6 +9,7 @@ import { useRunStore } from '../stores/runStore'
 import { useSampleStore } from '../stores/sampleStore'
 import { EVENNESS_LEVELS, type EvennessLevel, type PaperSampleInput } from '../types/paper-sample'
 import { isGapOutOfTolerance } from '../utils/stripe'
+import { buildTraceCode, buildTracePrefix, isTraceCodeFormat } from '../utils/trace'
 
 const emptySampleForm: PaperSampleInput = {
   sampleNo: '',
@@ -40,6 +41,7 @@ export default function SampleCards() {
   const [form, setForm] = useState<PaperSampleInput>(emptySampleForm)
   const [evennessFilter, setEvennessFilter] = useState<EvennessLevel | '全部'>('全部')
   const [stripeFloor, setStripeFloor] = useState(0)
+  const [traceQuery, setTraceQuery] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const { mmToCm, formatGrammage } = useUnitConvert()
 
@@ -57,6 +59,36 @@ export default function SampleCards() {
   )
   const denseCount = samples.filter((sample) => sample.stripeCount >= 50).length
   const recheckCount = samples.filter((sample) => sample.evenness !== '均匀').length
+
+  // 登记表单里预览即将自动生成的追溯码：选定工序的日期、帘号 + 当天该帘下一流水
+  const formRun = runById.get(form.runId)
+  const formMould = formRun ? mouldById.get(formRun.mouldId) : undefined
+  const formTracePreview = useMemo(() => {
+    if (!formRun || !formMould) return null
+    const prefix = buildTracePrefix(formRun.runDate, formMould.mouldNo)
+    const sequence = samples.filter((sample) => sample.traceCode.startsWith(prefix)).length + 1
+    return buildTraceCode(formRun.runDate, formMould.mouldNo, sequence)
+  }, [formMould, formRun, samples])
+
+  // 按完整追溯码定位卡片；查不到即说明档案里没有这张样本
+  const normalizedTrace = traceQuery.trim().toUpperCase()
+  const traceSearchActive = normalizedTrace.length > 0
+  const traceFormatOk = !traceSearchActive || isTraceCodeFormat(normalizedTrace)
+  const locatedSample = traceSearchActive && traceFormatOk
+    ? samples.find((sample) => sample.traceCode === normalizedTrace) ?? null
+    : null
+  const traceNotFound = traceSearchActive && traceFormatOk && !locatedSample
+  const displayedSamples = traceSearchActive && traceFormatOk
+    ? (locatedSample ? [locatedSample] : [])
+    : filteredSamples
+
+  useEffect(() => {
+    if (locatedSample) {
+      document
+        .querySelector(`[data-tracecode="${locatedSample.traceCode}"]`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }, [locatedSample])
 
   const updateForm = <K extends keyof PaperSampleInput,>(key: K, value: PaperSampleInput[K]) => {
     setForm((current) => ({ ...current, [key]: value }))
@@ -80,7 +112,7 @@ export default function SampleCards() {
       <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 2, alignItems: { xs: 'flex-start', md: 'center' }, flexDirection: { xs: 'column', md: 'row' } }}>
         <Box>
           <Typography component="h1" variant="h3" color="#344a34">成纸样本与透光检验卡</Typography>
-          <Typography color="text.secondary" sx={{ mt: 0.75 }}>按匀度与帘纹条数分档，复核样本对应的抄纸工序和归档位置。</Typography>
+          <Typography color="text.secondary" sx={{ mt: 0.75 }}>每张样本的追溯码由标识、抄纸日期、帘号与当天该帘流水拼成，可按完整追溯码直接定位卡片。</Typography>
         </Box>
         <Button variant="contained" size="large" onClick={() => setShowForm((current) => !current)} data-testid="new-sample">
           {showForm ? '收起登记' : '新建样本'}
@@ -88,6 +120,14 @@ export default function SampleCards() {
       </Box>
 
       {errorMessage && <Alert severity="warning">{errorMessage}</Alert>}
+      {traceNotFound && (
+        <Alert severity="warning" data-testid="trace-missing">
+          档案里没有追溯码为 <Box component="span" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>{normalizedTrace}</Box> 的样本，请核对抄纸日期、帘号与流水。
+        </Alert>
+      )}
+      {traceSearchActive && !traceFormatOk && (
+        <Alert severity="info">请输入完整追溯码：TM 开头，后接抄纸日期、帘号与流水共 10 位数字，如 TM2607010101。</Alert>
+      )}
 
       {showForm && (
         <Card data-testid="form-sample" sx={{ borderColor: '#9eb096' }}>
@@ -101,6 +141,16 @@ export default function SampleCards() {
                   {runs.map((run) => <option key={run.id} value={run.id}>{run.runNo} · {run.runDate}</option>)}
                 </TextField>
               </Grid>
+              <Grid item xs={12} md={5}>
+                <TextField
+                  fullWidth
+                  label="追溯码（登记时自动生成）"
+                  value={formTracePreview ?? '选定工序后生成'}
+                  disabled
+                  helperText="由标识 TM、对应工序的抄纸日期、帘号数字与当天该帘的两位流水拼成"
+                  inputProps={{ readOnly: true, style: { fontFamily: 'monospace', fontWeight: 700, letterSpacing: '0.08em' }, 'data-testid': 'field-tracePreview' }}
+                />
+              </Grid>
               <Grid item xs={6} md={2}><TextField fullWidth type="number" label="样本尺寸" value={form.sizeMm} onChange={(event) => updateForm('sizeMm', Number(event.target.value))} inputProps={{ min: 20, max: 1000, step: 1, 'data-testid': 'field-sizeMm' }} InputProps={{ endAdornment: 'mm' }} /></Grid>
               <Grid item xs={6} md={3}><TextField fullWidth type="number" label="帘纹条数" value={form.stripeCount} onChange={(event) => updateForm('stripeCount', Number(event.target.value))} inputProps={{ min: 1, max: 300, step: 1, 'data-testid': 'field-stripeCount' }} /></Grid>
               <Grid item xs={6} md={3}>
@@ -108,7 +158,7 @@ export default function SampleCards() {
                   {EVENNESS_LEVELS.map((option) => <option key={option} value={option}>{option}</option>)}
                 </TextField>
               </Grid>
-              <Grid item xs={12} md={5}><TextField fullWidth label="存档位" value={form.archiveBin} onChange={(event) => updateForm('archiveBin', event.target.value)} inputProps={{ 'data-testid': 'field-archiveBin' }} /></Grid>
+              <Grid item xs={12} md={4}><TextField fullWidth label="存档位" value={form.archiveBin} onChange={(event) => updateForm('archiveBin', event.target.value)} inputProps={{ 'data-testid': 'field-archiveBin' }} /></Grid>
             </Grid>
             <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1.5, mt: 2.5 }}>
               <Button onClick={() => setShowForm(false)}>取消</Button>
@@ -137,26 +187,61 @@ export default function SampleCards() {
               <RulerInput label="最低帘纹条数" value={stripeFloor} onChange={setStripeFloor} unit="条" min={0} max={300} step={1} compact />
             </Grid>
             <Grid item xs={6} md={2}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}><Typography variant="body2" color="text.secondary">当前记录</Typography><Typography variant="h5" data-testid="count-sample">{filteredSamples.length}</Typography></Box>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}><Typography variant="body2" color="text.secondary">当前记录</Typography><Typography variant="h5" data-testid="count-sample">{displayedSamples.length}</Typography></Box>
             </Grid>
             <Grid item xs={6} md={3}><Button fullWidth variant="outlined" onClick={() => { setEvennessFilter('全部'); setStripeFloor(0) }}>重置分档</Button></Grid>
+            <Grid item xs={12} md={7}>
+              <TextField
+                fullWidth
+                size="small"
+                label="追溯码定位"
+                placeholder="输入完整追溯码，如 TM2607010101"
+                value={traceQuery}
+                onChange={(event) => setTraceQuery(event.target.value)}
+                inputProps={{ style: { fontFamily: 'monospace', letterSpacing: '0.06em' }, 'data-testid': 'field-traceCode' }}
+                InputProps={traceQuery ? {
+                  endAdornment: (
+                    <InputAdornment position="end">
+                      <Button size="small" onClick={() => setTraceQuery('')} data-testid="clear-traceCode">清除</Button>
+                    </InputAdornment>
+                  ),
+                } : undefined}
+              />
+            </Grid>
           </Grid>
         </CardContent>
       </Card>
 
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))', xl: 'repeat(3, minmax(0, 1fr))' }, gap: 2 }}>
-        {filteredSamples.map((sample) => {
+        {displayedSamples.map((sample) => {
           const run = runById.get(sample.runId)
           const mould = run ? mouldById.get(run.mouldId) : undefined
           const tier = stripeTier(sample.stripeCount)
           const gap = run?.measuredGap ?? mould?.stripeGap ?? 1
+          const highlighted = locatedSample?.id === sample.id
           return (
-            <Card key={sample.id ?? sample.sampleNo} data-testid="row-sample" sx={{ bgcolor: sample.evenness === '均匀' ? '#fffdf7' : '#fff9e8' }}>
+            <Card
+              key={sample.id ?? sample.sampleNo}
+              data-testid="row-sample"
+              data-tracecode={sample.traceCode}
+              sx={{
+                bgcolor: sample.evenness === '均匀' ? '#fffdf7' : '#fff9e8',
+                outline: highlighted ? '3px solid #426044' : 'none',
+                outlineOffset: '-1px',
+              }}
+            >
               <CardContent sx={{ p: 2.25 }}>
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 1.5, alignItems: 'flex-start', mb: 1.5 }}>
                   <Box>
                     <Typography variant="h6" sx={{ fontWeight: 800 }}>{sample.sampleNo}</Typography>
-                    <Typography variant="caption" color="text.secondary">工序 {run?.runNo ?? '待关联'} · {run?.runDate ?? '日期待补'}</Typography>
+                    <Chip
+                      size="small"
+                      variant="outlined"
+                      label={sample.traceCode || '追溯码待补'}
+                      data-testid="trace-code"
+                      sx={{ mt: 0.5, fontFamily: 'monospace', fontWeight: 700, letterSpacing: '0.05em' }}
+                    />
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>工序 {run?.runNo ?? '待关联'} · {run?.runDate ?? '日期待补'}</Typography>
                   </Box>
                   <Chip size="small" color={tier.color} label={tier.label} />
                 </Box>
@@ -181,8 +266,8 @@ export default function SampleCards() {
             </Card>
           )
         })}
-        {filteredSamples.length === 0 && (
-          <Card sx={{ gridColumn: '1 / -1' }}><CardContent sx={{ textAlign: 'center', py: 7 }}><Typography color="text.secondary">没有符合当前匀度与帘纹条数分档的样本</Typography></CardContent></Card>
+        {displayedSamples.length === 0 && (
+          <Card sx={{ gridColumn: '1 / -1' }}><CardContent sx={{ textAlign: 'center', py: 7 }}><Typography color="text.secondary">{traceNotFound ? '档案里没有这张样本' : '没有符合当前匀度与帘纹条数分档的样本'}</Typography></CardContent></Card>
         )}
       </Box>
     </Stack>

@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { PaperSample, PaperSampleInput } from '../types/paper-sample'
 import { db, plain } from '../utils/db'
+import { buildTracePrefix, buildTraceCode } from '../utils/trace'
 
 interface SampleStore {
   paperSamples: PaperSample[]
@@ -29,13 +30,25 @@ export const useSampleStore = create<SampleStore>((set, get) => ({
   addSample: async (input) => {
     set({ error: null })
     try {
-      const payload = plain(input)
-      const id = Number(await db.paperSamples.add(payload))
-      const created: PaperSample = { ...payload, id, schemaRev: 2 }
+      const created = await db.transaction('rw', db.sheetRuns, db.moulds, db.paperSamples, async () => {
+        const run = await db.sheetRuns.get(input.runId)
+        const mould = run ? await db.moulds.get(run.mouldId) : undefined
+        if (!run || !mould) throw new Error('样本对应的工序或纸帘不存在，无法生成追溯码')
+
+        // 同一天同一张帘的样本流水接着排
+        const prefix = buildTracePrefix(run.runDate, mould.mouldNo)
+        const sameDayMouldSamples = await db.paperSamples.where('traceCode').startsWith(prefix).toArray()
+        const traceCode = buildTraceCode(run.runDate, mould.mouldNo, sameDayMouldSamples.length + 1)
+
+        const payload = plain({ ...input, traceCode })
+        const id = Number(await db.paperSamples.add(payload))
+        return { ...payload, id, schemaRev: 3 } satisfies PaperSample
+      })
       set((state) => ({ paperSamples: [created, ...state.paperSamples] }))
       return created
-    } catch {
-      set({ error: '样本登记失败，请检查样本编号是否重复' })
+    } catch (cause) {
+      const reason = cause instanceof Error ? cause.message : ''
+      set({ error: reason || '样本登记失败，请检查样本编号或追溯码是否重复' })
       return null
     }
   },
