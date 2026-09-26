@@ -4,6 +4,7 @@ import type { Mould } from '../types/mould'
 import type { PaperSample } from '../types/paper-sample'
 import type { SheetRun } from '../types/sheet-run'
 import { calculateDeviation, calculateMeshDensity } from './stripe'
+import { assignTraceCodes } from './traceCode'
 
 export function plain<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T
@@ -54,14 +55,20 @@ const seedRuns: SheetRun[] = [
   { id: 8, runNo: 'CB-260708', mouldId: 5, batchId: 3, runDate: daysAgo(24), operator: '郭文山', stripeDirection: '竖帘纹', dipCount: 2, stackHeight: 46, dryMethod: '火墙', grammage: 44, measuredGap: 0.71, deviation: calculateDeviation(0.71, gap4), schemaRev: 2 },
 ]
 
-const seedSamples: PaperSample[] = [
-  { id: 1, sampleNo: 'YZ-01', runId: 1, sizeMm: 210, stripeCount: 46, evenness: '均匀', archiveBin: '甲柜-03', schemaRev: 2 },
-  { id: 2, sampleNo: 'YZ-02', runId: 2, sizeMm: 180, stripeCount: 52, evenness: '略花', archiveBin: '甲柜-07', schemaRev: 2 },
-  { id: 3, sampleNo: 'YZ-03', runId: 3, sizeMm: 240, stripeCount: 39, evenness: '花', archiveBin: '乙柜-02', schemaRev: 2 },
-  { id: 4, sampleNo: 'YZ-04', runId: 4, sizeMm: 210, stripeCount: 31, evenness: '略花', archiveBin: '乙柜-05', schemaRev: 2 },
-  { id: 5, sampleNo: 'YZ-05', runId: 5, sizeMm: 200, stripeCount: 48, evenness: '均匀', archiveBin: '甲柜-11', schemaRev: 2 },
-  { id: 6, sampleNo: 'YZ-06', runId: 6, sizeMm: 260, stripeCount: 57, evenness: '均匀', archiveBin: '丙柜-01', schemaRev: 2 },
+const seedSampleBase: Array<Omit<PaperSample, 'traceCode'>> = [
+  { id: 1, sampleNo: 'YZ-01', runId: 1, sizeMm: 210, stripeCount: 46, evenness: '均匀', archiveBin: '甲柜-03', schemaRev: 3 },
+  { id: 2, sampleNo: 'YZ-02', runId: 2, sizeMm: 180, stripeCount: 52, evenness: '略花', archiveBin: '甲柜-07', schemaRev: 3 },
+  { id: 3, sampleNo: 'YZ-03', runId: 3, sizeMm: 240, stripeCount: 39, evenness: '花', archiveBin: '乙柜-02', schemaRev: 3 },
+  { id: 4, sampleNo: 'YZ-04', runId: 4, sizeMm: 210, stripeCount: 31, evenness: '略花', archiveBin: '乙柜-05', schemaRev: 3 },
+  { id: 5, sampleNo: 'YZ-05', runId: 5, sizeMm: 200, stripeCount: 48, evenness: '均匀', archiveBin: '甲柜-11', schemaRev: 3 },
+  { id: 6, sampleNo: 'YZ-06', runId: 6, sizeMm: 260, stripeCount: 57, evenness: '均匀', archiveBin: '丙柜-01', schemaRev: 3 },
 ]
+
+const seedTraceCodes = assignTraceCodes(seedSampleBase, seedRuns, seedMoulds)
+const seedSamples: PaperSample[] = seedSampleBase.map((sample) => ({
+  ...sample,
+  traceCode: sample.id === undefined ? '' : seedTraceCodes.get(sample.id) ?? '',
+}))
 
 class GbPaperMillDatabase extends Dexie {
   moulds!: Table<Mould, number>
@@ -94,6 +101,22 @@ class GbPaperMillDatabase extends Dexie {
       })
       await transaction.table('paperSamples').toCollection().modify((value: Record<string, unknown>) => {
         value.schemaRev = 2
+      })
+    })
+    this.version(3).stores({
+      moulds: '++id,&mouldNo,state,wireMaterial,schemaRev',
+      fiberBatches: '++id,&batchNo,material,beatingDegree,schemaRev',
+      sheetRuns: '++id,&runNo,mouldId,batchId,runDate,operator,schemaRev',
+      paperSamples: '++id,&sampleNo,&traceCode,runId,evenness,stripeCount,schemaRev',
+    }).upgrade(async (transaction) => {
+      const runs = (await transaction.table('sheetRuns').toArray()) as SheetRun[]
+      const moulds = (await transaction.table('moulds').toArray()) as Mould[]
+      const samples = (await transaction.table('paperSamples').toArray()) as PaperSample[]
+      const codes = assignTraceCodes(samples, runs, moulds)
+      await transaction.table('paperSamples').toCollection().modify((value: Record<string, unknown>) => {
+        const code = codes.get(value.id as number)
+        if (code) value.traceCode = code
+        value.schemaRev = 3
       })
     })
     this.on('populate', () => this.seed())

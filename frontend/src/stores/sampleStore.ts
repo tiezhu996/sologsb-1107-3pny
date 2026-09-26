@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { PaperSample, PaperSampleInput } from '../types/paper-sample'
 import { db, plain } from '../utils/db'
+import { nextTraceCode } from '../utils/traceCode'
 
 interface SampleStore {
   paperSamples: PaperSample[]
@@ -29,13 +30,16 @@ export const useSampleStore = create<SampleStore>((set, get) => ({
   addSample: async (input) => {
     set({ error: null })
     try {
-      const payload = plain(input)
+      const [runs, moulds, samples] = await Promise.all([db.sheetRuns.toArray(), db.moulds.toArray(), db.paperSamples.toArray()])
+      const traceCode = nextTraceCode(samples, runs, moulds, input.runId)
+      if (!traceCode) throw new Error('run or mould missing')
+      const payload = plain({ ...input, traceCode })
       const id = Number(await db.paperSamples.add(payload))
-      const created: PaperSample = { ...payload, id, schemaRev: 2 }
+      const created: PaperSample = { ...payload, id, schemaRev: 3 }
       set((state) => ({ paperSamples: [created, ...state.paperSamples] }))
       return created
     } catch {
-      set({ error: '样本登记失败，请检查样本编号是否重复' })
+      set({ error: '样本登记失败，请检查样本编号是否重复或工序是否关联' })
       return null
     }
   },

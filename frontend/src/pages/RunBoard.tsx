@@ -6,6 +6,7 @@ import { useUnitConvert } from '../hooks/useUnitConvert'
 import { useFiberStore } from '../stores/fiberStore'
 import { useMouldStore } from '../stores/mouldStore'
 import { useRunStore } from '../stores/runStore'
+import { useSampleStore } from '../stores/sampleStore'
 import { DRY_METHODS, STRIPE_DIRECTIONS, type DryMethod, type SheetRunInput, type StripeDirection } from '../types/sheet-run'
 import { calculateDeviation, getGapConclusion, isGapOutOfTolerance } from '../utils/stripe'
 
@@ -48,6 +49,9 @@ export default function RunBoard() {
   const batches = useFiberStore((state) => state.fiberBatches)
   const batchError = useFiberStore((state) => state.error)
   const loadBatches = useFiberStore((state) => state.loadFiberBatches)
+  const samples = useSampleStore((state) => state.paperSamples)
+  const sampleError = useSampleStore((state) => state.error)
+  const loadSamples = useSampleStore((state) => state.loadSamples)
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState<SheetRunInput>(emptyRunForm)
   const [dateFilter, setDateFilter] = useState('')
@@ -60,10 +64,21 @@ export default function RunBoard() {
     void loadRuns()
     void loadMoulds()
     void loadBatches()
-  }, [loadBatches, loadMoulds, loadRuns])
+    void loadSamples()
+  }, [loadBatches, loadMoulds, loadRuns, loadSamples])
 
   const mouldById = useMemo(() => new Map(moulds.map((mould) => [mould.id, mould])), [moulds])
   const batchById = useMemo(() => new Map(batches.map((batch) => [batch.id, batch])), [batches])
+  const traceCodesByRun = useMemo(() => {
+    const map = new Map<number, string[]>()
+    const ordered = [...samples].sort((a, b) => (a.id ?? 0) - (b.id ?? 0))
+    for (const sample of ordered) {
+      const list = map.get(sample.runId) ?? []
+      list.push(sample.traceCode)
+      map.set(sample.runId, list)
+    }
+    return map
+  }, [samples])
   const filteredRuns = useMemo(
     () => runs.filter((run) => {
       const mould = mouldById.get(run.mouldId)
@@ -100,7 +115,7 @@ export default function RunBoard() {
     }
   }
 
-  const error = runError ?? mouldError ?? batchError
+  const error = runError ?? mouldError ?? batchError ?? sampleError
 
   return (
     <Stack spacing={3}>
@@ -208,12 +223,13 @@ export default function RunBoard() {
       </Grid>
 
       <TableContainer component={Card}>
-        <Table sx={{ minWidth: 1080 }}>
+        <Table sx={{ minWidth: 1240 }}>
           <TableHead>
             <TableRow>
               <TableCell>工序 / 日期</TableCell>
               <TableCell>纸帘与料批</TableCell>
               <TableCell>抄纸参数</TableCell>
+              <TableCell>产出追溯码</TableCell>
               <TableCell align="right">克重</TableCell>
               <TableCell>实测间距与偏差</TableCell>
               <TableCell align="right">保存实测</TableCell>
@@ -223,6 +239,7 @@ export default function RunBoard() {
             {filteredRuns.map((run) => {
               const mould = mouldById.get(run.mouldId)
               const batch = batchById.get(run.batchId)
+              const traceCodes = run.id === undefined ? [] : traceCodesByRun.get(run.id) ?? []
               const draftGap = run.id === undefined ? run.measuredGap : draftGaps[run.id] ?? run.measuredGap
               const draftDeviation = calculateDeviation(draftGap, mould?.stripeGap ?? draftGap)
               const exceeded = isGapOutOfTolerance(draftDeviation)
@@ -239,6 +256,15 @@ export default function RunBoard() {
                   <TableCell>
                     <Typography variant="body2">{run.stripeDirection} · 荡料 {run.dipCount} 次</Typography>
                     <Typography variant="caption" color="text.secondary">叠高 {run.stackHeight} 张 · {run.dryMethod} · 帘框 {cmToMm(mould?.frameW ?? 0)} × {cmToMm(mould?.frameH ?? 0)} mm</Typography>
+                  </TableCell>
+                  <TableCell sx={{ minWidth: 190 }} data-testid="run-trace-codes">
+                    {traceCodes.length > 0 ? (
+                      <Stack direction="row" spacing={0.5} useFlexGap sx={{ flexWrap: 'wrap' }}>
+                        {traceCodes.map((code) => <Chip key={code} size="small" variant="outlined" label={code} sx={{ fontFamily: 'monospace' }} />)}
+                      </Stack>
+                    ) : (
+                      <Typography variant="caption" color="text.secondary">暂无样本</Typography>
+                    )}
                   </TableCell>
                   <TableCell align="right">{run.grammage} g/m²</TableCell>
                   <TableCell sx={{ minWidth: 270 }}>
@@ -273,7 +299,7 @@ export default function RunBoard() {
               )
             })}
             {filteredRuns.length === 0 && (
-              <TableRow><TableCell colSpan={6} align="center" sx={{ py: 5 }}>没有符合日期与帘号条件的工序</TableCell></TableRow>
+              <TableRow><TableCell colSpan={7} align="center" sx={{ py: 5 }}>没有符合日期与帘号条件的工序</TableCell></TableRow>
             )}
           </TableBody>
         </Table>

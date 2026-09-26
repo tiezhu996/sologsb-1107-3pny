@@ -9,6 +9,7 @@ import { useRunStore } from '../stores/runStore'
 import { useSampleStore } from '../stores/sampleStore'
 import { EVENNESS_LEVELS, type EvennessLevel, type PaperSampleInput } from '../types/paper-sample'
 import { isGapOutOfTolerance } from '../utils/stripe'
+import { TRACE_CODE_PATTERN } from '../utils/traceCode'
 
 const emptySampleForm: PaperSampleInput = {
   sampleNo: '',
@@ -40,6 +41,7 @@ export default function SampleCards() {
   const [form, setForm] = useState<PaperSampleInput>(emptySampleForm)
   const [evennessFilter, setEvennessFilter] = useState<EvennessLevel | '全部'>('全部')
   const [stripeFloor, setStripeFloor] = useState(0)
+  const [traceQuery, setTraceQuery] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const { mmToCm, formatGrammage } = useUnitConvert()
 
@@ -55,6 +57,14 @@ export default function SampleCards() {
     () => samples.filter((sample) => (evennessFilter === '全部' || sample.evenness === evennessFilter) && sample.stripeCount >= stripeFloor),
     [evennessFilter, samples, stripeFloor],
   )
+  const normalizedTrace = traceQuery.trim().toUpperCase()
+  const traceComplete = TRACE_CODE_PATTERN.test(normalizedTrace)
+  const traceHit = useMemo(
+    () => (traceComplete ? samples.find((sample) => sample.traceCode.toUpperCase() === normalizedTrace) : undefined),
+    [normalizedTrace, samples, traceComplete],
+  )
+  const traceMiss = traceComplete && !traceHit
+  const visibleSamples = traceComplete ? (traceHit ? [traceHit] : []) : filteredSamples
   const denseCount = samples.filter((sample) => sample.stripeCount >= 50).length
   const recheckCount = samples.filter((sample) => sample.evenness !== '均匀').length
 
@@ -110,6 +120,9 @@ export default function SampleCards() {
               </Grid>
               <Grid item xs={12} md={5}><TextField fullWidth label="存档位" value={form.archiveBin} onChange={(event) => updateForm('archiveBin', event.target.value)} inputProps={{ 'data-testid': 'field-archiveBin' }} /></Grid>
             </Grid>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 2 }}>
+              保存时按“TM + 抄纸日期 + 帘号数字 + 两位流水”自动生成追溯码，无需手填。
+            </Typography>
             <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1.5, mt: 2.5 }}>
               <Button onClick={() => setShowForm(false)}>取消</Button>
               <Button variant="contained" onClick={handleSubmit} disabled={submitting} data-testid="submit-sample">保存样本</Button>
@@ -127,25 +140,41 @@ export default function SampleCards() {
       <Card>
         <CardContent sx={{ p: { xs: 2, md: 2.5 } }}>
           <Grid container spacing={2} alignItems="center">
-            <Grid item xs={12} sm={5} md={3}>
+            <Grid item xs={12} md={4}>
+              <TextField
+                fullWidth
+                size="small"
+                label="追溯码定位"
+                placeholder="如 TM2607010101"
+                value={traceQuery}
+                onChange={(event) => setTraceQuery(event.target.value)}
+                error={traceMiss}
+                helperText={traceMiss ? '档案里没有这张样本' : '输入完整追溯码（TM+日期+帘号+流水）定位卡片'}
+                inputProps={{ 'data-testid': 'field-traceCode' }}
+              />
+            </Grid>
+            <Grid item xs={12} sm={5} md={2}>
               <TextField select fullWidth size="small" label="匀度筛选" value={evennessFilter} onChange={(event) => setEvennessFilter(event.target.value as EvennessLevel | '全部')} SelectProps={{ native: true }}>
                 <option value="全部">全部匀度</option>
                 {EVENNESS_LEVELS.map((option) => <option key={option} value={option}>{option}</option>)}
               </TextField>
             </Grid>
-            <Grid item xs={12} sm={7} md={4}>
+            <Grid item xs={12} sm={7} md={3}>
               <RulerInput label="最低帘纹条数" value={stripeFloor} onChange={setStripeFloor} unit="条" min={0} max={300} step={1} compact />
             </Grid>
-            <Grid item xs={6} md={2}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}><Typography variant="body2" color="text.secondary">当前记录</Typography><Typography variant="h5" data-testid="count-sample">{filteredSamples.length}</Typography></Box>
+            <Grid item xs={6} md={1}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}><Typography variant="body2" color="text.secondary">当前记录</Typography><Typography variant="h5" data-testid="count-sample">{visibleSamples.length}</Typography></Box>
             </Grid>
-            <Grid item xs={6} md={3}><Button fullWidth variant="outlined" onClick={() => { setEvennessFilter('全部'); setStripeFloor(0) }}>重置分档</Button></Grid>
+            <Grid item xs={6} md={2}><Button fullWidth variant="outlined" onClick={() => { setEvennessFilter('全部'); setStripeFloor(0); setTraceQuery('') }}>重置分档</Button></Grid>
           </Grid>
         </CardContent>
       </Card>
 
+      {traceMiss && <Alert severity="warning" data-testid="trace-miss">档案里没有这张样本：{normalizedTrace}</Alert>}
+      {traceComplete && traceHit && <Alert severity="success" data-testid="trace-hit">已定位追溯码 {traceHit.traceCode} 对应的样本卡片</Alert>}
+
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: 'repeat(2, minmax(0, 1fr))', xl: 'repeat(3, minmax(0, 1fr))' }, gap: 2 }}>
-        {filteredSamples.map((sample) => {
+        {visibleSamples.map((sample) => {
           const run = runById.get(sample.runId)
           const mould = run ? mouldById.get(run.mouldId) : undefined
           const tier = stripeTier(sample.stripeCount)
@@ -156,7 +185,8 @@ export default function SampleCards() {
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 1.5, alignItems: 'flex-start', mb: 1.5 }}>
                   <Box>
                     <Typography variant="h6" sx={{ fontWeight: 800 }}>{sample.sampleNo}</Typography>
-                    <Typography variant="caption" color="text.secondary">工序 {run?.runNo ?? '待关联'} · {run?.runDate ?? '日期待补'}</Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>工序 {run?.runNo ?? '待关联'} · {run?.runDate ?? '日期待补'}</Typography>
+                    <Typography variant="caption" sx={{ fontFamily: 'monospace', fontWeight: 700, color: '#4f6b4a', letterSpacing: '.04em' }} data-testid="trace-code">追溯码 {sample.traceCode}</Typography>
                   </Box>
                   <Chip size="small" color={tier.color} label={tier.label} />
                 </Box>
@@ -181,8 +211,8 @@ export default function SampleCards() {
             </Card>
           )
         })}
-        {filteredSamples.length === 0 && (
-          <Card sx={{ gridColumn: '1 / -1' }}><CardContent sx={{ textAlign: 'center', py: 7 }}><Typography color="text.secondary">没有符合当前匀度与帘纹条数分档的样本</Typography></CardContent></Card>
+        {visibleSamples.length === 0 && (
+          <Card sx={{ gridColumn: '1 / -1' }}><CardContent sx={{ textAlign: 'center', py: 7 }}><Typography color="text.secondary">{traceMiss ? `档案里没有这张样本：${normalizedTrace}` : '没有符合当前匀度与帘纹条数分档的样本'}</Typography></CardContent></Card>
         )}
       </Box>
     </Stack>
